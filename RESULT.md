@@ -25,3 +25,7 @@ Print da execução:
     - Escala uniforme: [ diminui e ] aumenta
     - Instanciar vários cubos: N cria um novo cubo
     - Trocar cubo ativo: TAB
+
+## Tarefa - Adicionando Texturas
+
+![Execução do ObjTexViewer](./print-obj-tex-viewer.png)
