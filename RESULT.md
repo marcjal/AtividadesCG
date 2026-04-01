@@ -29,3 +29,7 @@ Print da execução:
 ## Tarefa - Adicionando Texturas
 
 ![Execução do ObjTexViewer](./print-obj-tex-viewer.png)
+
+## Tarefa - Adicionando Iluminação
+
+![Execução do SpherePhongCustom](./print-sphere-phong-custom.png)

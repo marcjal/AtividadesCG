@@ -49,6 +49,7 @@ set(EXERCISES
     TriangleTex
     TriangleTexCustom
     SpherePhong
+    SpherePhongCustom
     ObjTexViewer
    
 )
