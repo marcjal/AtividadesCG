@@ -51,6 +51,7 @@ set(EXERCISES
     SpherePhong
     SpherePhongCustom
     ObjTexViewer
+    AtividadeVivencial
    
 )
 
