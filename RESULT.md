@@ -33,3 +33,7 @@ Print da execução:
 ## Tarefa - Adicionando Iluminação
 
 ![Execução do SpherePhongCustom](./print-sphere-phong-custom.png)
+
+## Tarefa - Adicionando uma câmera em primeira pessoa
+
+![Execução do SpherePhongCustom](./print-camera.png)

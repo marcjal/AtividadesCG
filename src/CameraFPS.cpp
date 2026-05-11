@@ -1,0 +1,944 @@
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <cmath>
+
+using namespace std;
+
+#include <glad/glad.h>
+
+#include <GLFW/glfw3.h>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+using namespace glm;
+
+const GLuint WIDTH = 1000;
+const GLuint HEIGHT = 1000;
+
+// ============================================================
+// Classe Camera - câmera em primeira pessoa
+// ============================================================
+
+class Camera
+{
+public:
+    vec3 Position;
+    vec3 Front;
+    vec3 Up;
+    vec3 Right;
+    vec3 WorldUp;
+
+    float Yaw;
+    float Pitch;
+    float MovementSpeed;
+    float MouseSensitivity;
+    float Fov;
+
+    Camera(
+        vec3 position = vec3(0.0f, 0.0f, 6.0f),
+        vec3 up = vec3(0.0f, 1.0f, 0.0f),
+        float yaw = -90.0f,
+        float pitch = 0.0f)
+    {
+        Position = position;
+        WorldUp = up;
+        Yaw = yaw;
+        Pitch = pitch;
+        MovementSpeed = 4.0f;
+        MouseSensitivity = 0.08f;
+        Fov = 45.0f;
+
+        updateCameraVectors();
+    }
+
+    mat4 getViewMatrix() const
+    {
+        return lookAt(Position, Position + Front, Up);
+    }
+
+    mat4 getProjectionMatrix(float aspectRatio) const
+    {
+        return perspective(radians(Fov), aspectRatio, 0.1f, 100.0f);
+    }
+
+    void move(GLFWwindow *window, float deltaTime)
+    {
+        float velocity = MovementSpeed * deltaTime;
+
+        // Movimento de primeira pessoa: W/S e A/D deslocam no plano XZ.
+        // A direção vertical do olhar continua sendo controlada pelo mouse.
+        vec3 forward = normalize(vec3(Front.x, 0.0f, Front.z));
+        vec3 right = normalize(vec3(Right.x, 0.0f, Right.z));
+
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        {
+            Position += forward * velocity;
+        }
+
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        {
+            Position -= forward * velocity;
+        }
+
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        {
+            Position -= right * velocity;
+        }
+
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        {
+            Position += right * velocity;
+        }
+    }
+
+    void rotate(float xoffset, float yoffset)
+    {
+        xoffset *= MouseSensitivity;
+        yoffset *= MouseSensitivity;
+
+        Yaw += xoffset;
+        Pitch += yoffset;
+
+        // Evita inverter a câmera quando o mouse olha muito para cima/baixo.
+        if (Pitch > 89.0f)
+        {
+            Pitch = 89.0f;
+        }
+
+        if (Pitch < -89.0f)
+        {
+            Pitch = -89.0f;
+        }
+
+        updateCameraVectors();
+    }
+
+    void zoom(float yoffset)
+    {
+        Fov -= yoffset;
+
+        if (Fov < 1.0f)
+        {
+            Fov = 1.0f;
+        }
+
+        if (Fov > 45.0f)
+        {
+            Fov = 45.0f;
+        }
+    }
+
+private:
+    void updateCameraVectors()
+    {
+        vec3 front;
+
+        front.x = cos(radians(Yaw)) * cos(radians(Pitch));
+        front.y = sin(radians(Pitch));
+        front.z = sin(radians(Yaw)) * cos(radians(Pitch));
+
+        Front = normalize(front);
+        Right = normalize(cross(Front, WorldUp));
+        Up = normalize(cross(Right, Front));
+    }
+};
+
+enum class TransformMode
+{
+    TRANSLATE,
+    ROTATE,
+    SCALE
+};
+
+struct Object3D
+{
+    GLuint VAO = 0;
+    GLuint VBO = 0;
+    GLsizei nVertices = 0;
+
+    string name;
+
+    vec3 position = vec3(0.0f);
+    vec3 rotation = vec3(0.0f);
+    vec3 scale = vec3(1.0f);
+
+    vec3 color = vec3(0.8f, 0.8f, 0.8f);
+};
+
+vector<Object3D> objects;
+
+int selectedObject = 0;
+TransformMode currentMode = TransformMode::TRANSLATE;
+
+bool wireframeMode = false;
+
+Camera camera;
+
+bool firstMouse = true;
+float lastX = WIDTH / 2.0f;
+float lastY = HEIGHT / 2.0f;
+
+float deltaTime = 0.0f;
+float lastFrame = 0.0f;
+
+void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods);
+void mouse_callback(GLFWwindow *window, double xpos, double ypos);
+void scroll_callback(GLFWwindow *window, double xoffset, double yoffset);
+
+int setupShader();
+
+Object3D loadSimpleOBJ(
+    const string &filePath,
+    const string &objectName,
+    const vec3 &objectColor);
+
+int parseOBJVertexIndex(const string &token, int vertexCount);
+
+bool fileExists(const string &path);
+string resolvePath(const string &path);
+
+void printControls();
+void printSelectedObject();
+void applyTransformation(int key, int mods);
+void deleteObjectBuffers();
+
+const GLchar *vertexShaderSource = R"(
+#version 330 core
+
+layout (location = 0) in vec3 position;
+
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+
+void main()
+{
+    gl_Position = projection * view * model * vec4(position, 1.0);
+}
+)";
+
+const GLchar *fragmentShaderSource = R"(
+#version 330 core
+
+uniform vec3 objectColor;
+
+out vec4 color;
+
+void main()
+{
+    color = vec4(objectColor, 1.0);
+}
+)";
+
+int main()
+{
+    glfwInit();
+
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
+
+    GLFWwindow *window = glfwCreateWindow(
+        WIDTH,
+        HEIGHT,
+        "Atividade Vivencial - Camera FPS",
+        nullptr,
+        nullptr);
+
+    if (!window)
+    {
+        cout << "Erro ao criar janela GLFW." << endl;
+        glfwTerminate();
+        return -1;
+    }
+
+    glfwMakeContextCurrent(window);
+
+    glfwSetKeyCallback(window, key_callback);
+    glfwSetCursorPosCallback(window, mouse_callback);
+    glfwSetScrollCallback(window, scroll_callback);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
+    {
+        cout << "Erro ao inicializar GLAD." << endl;
+        glfwTerminate();
+        return -1;
+    }
+
+    const GLubyte *renderer = glGetString(GL_RENDERER);
+    const GLubyte *version = glGetString(GL_VERSION);
+
+    cout << "Renderer: " << renderer << endl;
+    cout << "OpenGL version supported: " << version << endl;
+
+    int framebufferWidth, framebufferHeight;
+    glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+    glViewport(0, 0, framebufferWidth, framebufferHeight);
+
+    GLuint shaderID = setupShader();
+    glUseProgram(shaderID);
+
+    Object3D cube = loadSimpleOBJ(
+        resolvePath("assets/Modelos3D/Cube.obj"),
+        "Cube",
+        vec3(0.2f, 0.8f, 1.0f));
+
+    if (cube.VAO != 0)
+    {
+        cube.position = vec3(-2.0f, 0.0f, 0.0f);
+        cube.scale = vec3(0.8f);
+        objects.push_back(cube);
+    }
+
+    Object3D suzanne = loadSimpleOBJ(
+        resolvePath("assets/Modelos3D/Suzanne.obj"),
+        "Suzanne",
+        vec3(1.0f, 0.7f, 0.2f));
+
+    if (suzanne.VAO != 0)
+    {
+        suzanne.position = vec3(0.0f, 0.0f, 0.0f);
+        suzanne.scale = vec3(0.8f);
+        objects.push_back(suzanne);
+    }
+
+    Object3D suzanneSubdiv = loadSimpleOBJ(
+        resolvePath("assets/Modelos3D/SuzanneSubdiv1.obj"),
+        "SuzanneSubdiv1",
+        vec3(0.6f, 1.0f, 0.4f));
+
+    if (suzanneSubdiv.VAO != 0)
+    {
+        suzanneSubdiv.position = vec3(2.0f, 0.0f, 0.0f);
+        suzanneSubdiv.scale = vec3(0.8f);
+        objects.push_back(suzanneSubdiv);
+    }
+
+    if (objects.empty())
+    {
+        cout << "Nenhum objeto foi carregado. Verifique o caminho dos arquivos OBJ." << endl;
+        glfwTerminate();
+        return -1;
+    }
+
+    selectedObject = 0;
+
+    printControls();
+    printSelectedObject();
+
+    // ------------------------------------------------------------
+    // Matrizes de camera e projecao
+    // ------------------------------------------------------------
+
+    mat4 projection = camera.getProjectionMatrix((float)WIDTH / (float)HEIGHT);
+    mat4 view = camera.getViewMatrix();
+
+    GLint modelLoc = glGetUniformLocation(shaderID, "model");
+    GLint viewLoc = glGetUniformLocation(shaderID, "view");
+    GLint projectionLoc = glGetUniformLocation(shaderID, "projection");
+    GLint colorLoc = glGetUniformLocation(shaderID, "objectColor");
+
+    glUniformMatrix4fv(viewLoc, 1, GL_FALSE, value_ptr(view));
+    glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, value_ptr(projection));
+
+    glEnable(GL_DEPTH_TEST);
+
+    lastFrame = (float)glfwGetTime();
+
+    // ------------------------------------------------------------
+    // Loop principal
+    // ------------------------------------------------------------
+
+    while (!glfwWindowShouldClose(window))
+    {
+        glfwPollEvents();
+
+        float currentFrame = (float)glfwGetTime();
+        deltaTime = currentFrame - lastFrame;
+        lastFrame = currentFrame;
+
+        camera.move(window, deltaTime);
+
+        view = camera.getViewMatrix();
+        projection = camera.getProjectionMatrix((float)WIDTH / (float)HEIGHT);
+
+        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, value_ptr(view));
+        glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, value_ptr(projection));
+
+        glClearColor(0.08f, 0.08f, 0.10f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        if (wireframeMode)
+        {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        }
+        else
+        {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        }
+
+        for (int i = 0; i < (int)objects.size(); i++)
+        {
+            Object3D &obj = objects[i];
+
+            mat4 model = mat4(1.0f);
+
+            model = translate(model, obj.position);
+
+            model = rotate(model, radians(obj.rotation.x), vec3(1.0f, 0.0f, 0.0f));
+            model = rotate(model, radians(obj.rotation.y), vec3(0.0f, 1.0f, 0.0f));
+            model = rotate(model, radians(obj.rotation.z), vec3(0.0f, 0.0f, 1.0f));
+
+            model = scale(model, obj.scale);
+
+            glUniformMatrix4fv(modelLoc, 1, GL_FALSE, value_ptr(model));
+
+            if (i == selectedObject)
+            {
+                glUniform3f(colorLoc, 1.0f, 0.2f, 0.4f);
+            }
+            else
+            {
+                glUniform3fv(colorLoc, 1, value_ptr(obj.color));
+            }
+
+            glBindVertexArray(obj.VAO);
+            glDrawArrays(GL_TRIANGLES, 0, obj.nVertices);
+            glBindVertexArray(0);
+        }
+
+        glfwSwapBuffers(window);
+    }
+
+    deleteObjectBuffers();
+
+    glDeleteProgram(shaderID);
+
+    glfwTerminate();
+
+    return 0;
+}
+
+// ============================================================
+// Callback de teclado
+// ============================================================
+
+void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods)
+{
+    if (action != GLFW_PRESS && action != GLFW_REPEAT)
+    {
+        return;
+    }
+
+    if (key == GLFW_KEY_ESCAPE)
+    {
+        glfwSetWindowShouldClose(window, GL_TRUE);
+        return;
+    }
+
+    if (key == GLFW_KEY_TAB && action == GLFW_PRESS)
+    {
+        selectedObject++;
+
+        if (selectedObject >= (int)objects.size())
+        {
+            selectedObject = 0;
+        }
+
+        printSelectedObject();
+        return;
+    }
+
+    if (key == GLFW_KEY_T && action == GLFW_PRESS)
+    {
+        currentMode = TransformMode::TRANSLATE;
+        cout << "Modo atual: TRANSLACAO" << endl;
+        return;
+    }
+
+    if (key == GLFW_KEY_R && action == GLFW_PRESS)
+    {
+        currentMode = TransformMode::ROTATE;
+        cout << "Modo atual: ROTACAO" << endl;
+        return;
+    }
+
+    // S foi reservado para andar para tras na camera FPS.
+    // Por isso, o modo escala agora usa a tecla E.
+    if (key == GLFW_KEY_E && action == GLFW_PRESS)
+    {
+        currentMode = TransformMode::SCALE;
+        cout << "Modo atual: ESCALA" << endl;
+        return;
+    }
+
+    if (key == GLFW_KEY_M && action == GLFW_PRESS)
+    {
+        wireframeMode = !wireframeMode;
+
+        if (wireframeMode)
+        {
+            cout << "Visualizacao: WIREFRAME" << endl;
+        }
+        else
+        {
+            cout << "Visualizacao: SOLIDA" << endl;
+        }
+
+        return;
+    }
+
+    applyTransformation(key, mods);
+}
+
+// ============================================================
+// Callbacks da camera
+// ============================================================
+
+void mouse_callback(GLFWwindow *window, double xpos, double ypos)
+{
+    if (firstMouse)
+    {
+        lastX = (float)xpos;
+        lastY = (float)ypos;
+        firstMouse = false;
+    }
+
+    float xoffset = (float)xpos - lastX;
+    float yoffset = lastY - (float)ypos;
+
+    lastX = (float)xpos;
+    lastY = (float)ypos;
+
+    camera.rotate(xoffset, yoffset);
+}
+
+void scroll_callback(GLFWwindow *window, double xoffset, double yoffset)
+{
+    camera.zoom((float)yoffset);
+}
+
+void applyTransformation(int key, int mods)
+{
+    if (objects.empty())
+    {
+        return;
+    }
+
+    Object3D &obj = objects[selectedObject];
+
+    float direction = 1.0f;
+
+    if (mods & GLFW_MOD_SHIFT)
+    {
+        direction = -1.0f;
+    }
+
+    const float translationStep = 0.1f;
+    const float rotationStep = 5.0f;
+    const float scaleStep = 0.1f;
+    const float minScale = 0.05f;
+
+    if (currentMode == TransformMode::TRANSLATE)
+    {
+        // Setas: eixo X e Y
+        if (key == GLFW_KEY_LEFT)
+        {
+            obj.position.x -= translationStep;
+        }
+        else if (key == GLFW_KEY_RIGHT)
+        {
+            obj.position.x += translationStep;
+        }
+        else if (key == GLFW_KEY_UP)
+        {
+            obj.position.y += translationStep;
+        }
+        else if (key == GLFW_KEY_DOWN)
+        {
+            obj.position.y -= translationStep;
+        }
+        // Page Up / Page Down: eixo Z
+        else if (key == GLFW_KEY_PAGE_UP)
+        {
+            obj.position.z += translationStep;
+        }
+        else if (key == GLFW_KEY_PAGE_DOWN)
+        {
+            obj.position.z -= translationStep;
+        }
+        // Alternativa: X, Y, Z com Shift para sentido negativo
+        else if (key == GLFW_KEY_X)
+        {
+            obj.position.x += direction * translationStep;
+        }
+        else if (key == GLFW_KEY_Y)
+        {
+            obj.position.y += direction * translationStep;
+        }
+        else if (key == GLFW_KEY_Z)
+        {
+            obj.position.z += direction * translationStep;
+        }
+    }
+    else if (currentMode == TransformMode::ROTATE)
+    {
+        // X, Y, Z rotacionam nos eixos.
+        // Use Shift + eixo para rotacionar no sentido contrario.
+        if (key == GLFW_KEY_X)
+        {
+            obj.rotation.x += direction * rotationStep;
+        }
+        else if (key == GLFW_KEY_Y)
+        {
+            obj.rotation.y += direction * rotationStep;
+        }
+        else if (key == GLFW_KEY_Z)
+        {
+            obj.rotation.z += direction * rotationStep;
+        }
+    }
+    else if (currentMode == TransformMode::SCALE)
+    {
+        // + e - aplicam escala uniforme.
+        if (key == GLFW_KEY_EQUAL || key == GLFW_KEY_KP_ADD)
+        {
+            obj.scale += vec3(scaleStep);
+        }
+        else if (key == GLFW_KEY_MINUS || key == GLFW_KEY_KP_SUBTRACT)
+        {
+            obj.scale -= vec3(scaleStep);
+        }
+        // X, Y, Z aplicam escala por eixo.
+        // Use Shift + eixo para diminuir naquele eixo.
+        else if (key == GLFW_KEY_X)
+        {
+            obj.scale.x += direction * scaleStep;
+        }
+        else if (key == GLFW_KEY_Y)
+        {
+            obj.scale.y += direction * scaleStep;
+        }
+        else if (key == GLFW_KEY_Z)
+        {
+            obj.scale.z += direction * scaleStep;
+        }
+
+        obj.scale.x = std::max(obj.scale.x, minScale);
+        obj.scale.y = std::max(obj.scale.y, minScale);
+        obj.scale.z = std::max(obj.scale.z, minScale);
+    }
+}
+
+Object3D loadSimpleOBJ(
+    const string &filePath,
+    const string &objectName,
+    const vec3 &objectColor)
+{
+    Object3D obj;
+    obj.name = objectName;
+    obj.color = objectColor;
+
+    ifstream file(filePath);
+
+    if (!file.is_open())
+    {
+        cerr << "Erro ao abrir OBJ: " << filePath << endl;
+        return obj;
+    }
+
+    vector<vec3> positions;
+    vector<vec3> finalVertices;
+
+    string line;
+
+    while (getline(file, line))
+    {
+        if (line.empty())
+        {
+            continue;
+        }
+
+        istringstream iss(line);
+
+        string prefix;
+        iss >> prefix;
+
+        if (prefix.empty() || prefix[0] == '#')
+        {
+            continue;
+        }
+
+        if (prefix == "v")
+        {
+            vec3 position;
+            iss >> position.x >> position.y >> position.z;
+            positions.push_back(position);
+        }
+        else if (prefix == "f")
+        {
+            vector<int> faceIndices;
+            string token;
+
+            while (iss >> token)
+            {
+                int index = parseOBJVertexIndex(token, (int)positions.size());
+
+                if (index >= 0 && index < (int)positions.size())
+                {
+                    faceIndices.push_back(index);
+                }
+            }
+
+            if (faceIndices.size() >= 3)
+            {
+                for (int i = 1; i < (int)faceIndices.size() - 1; i++)
+                {
+                    finalVertices.push_back(positions[faceIndices[0]]);
+                    finalVertices.push_back(positions[faceIndices[i]]);
+                    finalVertices.push_back(positions[faceIndices[i + 1]]);
+                }
+            }
+        }
+    }
+
+    file.close();
+
+    if (finalVertices.empty())
+    {
+        cerr << "OBJ sem vertices finais: " << filePath << endl;
+        return obj;
+    }
+
+    glGenVertexArrays(1, &obj.VAO);
+    glGenBuffers(1, &obj.VBO);
+
+    glBindVertexArray(obj.VAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, obj.VBO);
+    glBufferData(
+        GL_ARRAY_BUFFER,
+        finalVertices.size() * sizeof(vec3),
+        finalVertices.data(),
+        GL_STATIC_DRAW);
+
+    glVertexAttribPointer(
+        0,
+        3,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(vec3),
+        (GLvoid *)0);
+
+    glEnableVertexAttribArray(0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
+    obj.nVertices = (GLsizei)finalVertices.size();
+
+    cout << "OBJ carregado: " << objectName
+         << " | arquivo: " << filePath
+         << " | vertices desenhados: " << obj.nVertices
+         << endl;
+
+    return obj;
+}
+
+int parseOBJVertexIndex(const string &token, int vertexCount)
+{
+    string indexString;
+
+    size_t slashPosition = token.find('/');
+
+    if (slashPosition == string::npos)
+    {
+        indexString = token;
+    }
+    else
+    {
+        indexString = token.substr(0, slashPosition);
+    }
+
+    if (indexString.empty())
+    {
+        return -1;
+    }
+
+    int index = stoi(indexString);
+
+    // OBJ normalmente usa indice comecando em 1.
+    if (index > 0)
+    {
+        return index - 1;
+    }
+
+    // Suporte opcional para indices negativos do OBJ.
+    // -1 significa ultimo vertice.
+    if (index < 0)
+    {
+        return vertexCount + index;
+    }
+
+    return -1;
+}
+
+int setupShader()
+{
+    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+    glCompileShader(vertexShader);
+
+    GLint success;
+    GLchar infoLog[512];
+
+    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+
+    if (!success)
+    {
+        glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
+        cout << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n"
+             << infoLog << endl;
+    }
+
+    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
+    glCompileShader(fragmentShader);
+
+    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+
+    if (!success)
+    {
+        glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
+        cout << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n"
+             << infoLog << endl;
+    }
+
+    GLuint shaderProgram = glCreateProgram();
+
+    glAttachShader(shaderProgram, vertexShader);
+    glAttachShader(shaderProgram, fragmentShader);
+
+    glLinkProgram(shaderProgram);
+
+    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+
+    if (!success)
+    {
+        glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
+        cout << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n"
+             << infoLog << endl;
+    }
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    return shaderProgram;
+}
+
+bool fileExists(const string &path)
+{
+    ifstream file(path);
+    return file.good();
+}
+
+string resolvePath(const string &path)
+{
+    vector<string> candidates =
+        {
+            path,
+            "../" + path,
+            "../../" + path,
+            "../../../" + path};
+
+    for (const string &candidate : candidates)
+    {
+        if (fileExists(candidate))
+        {
+            return candidate;
+        }
+    }
+
+    return path;
+}
+
+void printControls()
+{
+    cout << endl;
+    cout << "================ CONTROLES ================" << endl;
+    cout << "ESC              fecha a janela" << endl;
+    cout << "TAB              seleciona o proximo objeto" << endl;
+    cout << "T                modo translacao" << endl;
+    cout << "R                modo rotacao" << endl;
+    cout << "E                modo escala" << endl;
+    cout << "M                alterna solido/wireframe" << endl;
+    cout << endl;
+    cout << "CAMERA FPS:" << endl;
+    cout << "W                anda para frente" << endl;
+    cout << "S                anda para tras" << endl;
+    cout << "A                anda para a esquerda" << endl;
+    cout << "D                anda para a direita" << endl;
+    cout << "Mouse            rotaciona a camera" << endl;
+    cout << "Scroll           zoom in/out alterando o FOV" << endl;
+    cout << endl;
+    cout << "MODO TRANSLACAO:" << endl;
+    cout << "Setas            move em X/Y" << endl;
+    cout << "PageUp/PageDown  move em Z" << endl;
+    cout << "X/Y/Z            move no eixo escolhido" << endl;
+    cout << "Shift + X/Y/Z    move no sentido negativo do eixo" << endl;
+    cout << endl;
+    cout << "MODO ROTACAO:" << endl;
+    cout << "X/Y/Z            rotaciona no eixo escolhido" << endl;
+    cout << "Shift + X/Y/Z    rotaciona no sentido contrario" << endl;
+    cout << endl;
+    cout << "MODO ESCALA:" << endl;
+    cout << "+ ou keypad +    aumenta escala uniforme" << endl;
+    cout << "- ou keypad -    diminui escala uniforme" << endl;
+    cout << "X/Y/Z            aumenta escala no eixo escolhido" << endl;
+    cout << "Shift + X/Y/Z    diminui escala no eixo escolhido" << endl;
+    cout << "===========================================" << endl;
+    cout << endl;
+}
+
+void printSelectedObject()
+{
+    if (objects.empty())
+    {
+        return;
+    }
+
+    cout << "Objeto selecionado: "
+         << selectedObject
+         << " - "
+         << objects[selectedObject].name
+         << endl;
+}
+
+void deleteObjectBuffers()
+{
+    for (Object3D &obj : objects)
+    {
+        if (obj.VAO != 0)
+        {
+            glDeleteVertexArrays(1, &obj.VAO);
+            obj.VAO = 0;
+        }
+
+        if (obj.VBO != 0)
+        {
+            glDeleteBuffers(1, &obj.VBO);
+            obj.VBO = 0;
+        }
+    }
+}
