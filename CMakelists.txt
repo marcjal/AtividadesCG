@@ -53,6 +53,7 @@ set(EXERCISES
     ObjTexViewer
     AtividadeVivencial
     CameraFPS
+    TrajetoriasObjetos
    
 )
 
