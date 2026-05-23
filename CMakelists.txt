@@ -54,6 +54,7 @@ set(EXERCISES
     AtividadeVivencial
     CameraFPS
     TrajetoriasObjetos
+    AtividadeVivencialTresPontos
    
 )
 
