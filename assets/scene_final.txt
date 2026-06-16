@@ -1,0 +1,20 @@
+# Cena final - Visualizador 3D Grau B
+# Formato:
+# camera px py pz yaw pitch fov near far
+# light nome px py pz r g b intensity enabled
+# object nome caminho.obj px py pz rx ry rz escala
+# bezier nomeObjeto p0x p0y p0z p1x p1y p1z p2x p2y p2z p3x p3y p3z velocidade
+
+camera 0.0 1.5 7.0 -90.0 -8.0 45.0 0.1 100.0
+
+light Key -4.0 4.0 4.0 1.0 0.95 0.85 2.4 1
+light Fill 4.0 3.0 4.0 0.75 0.85 1.0 0.9 1
+light Back 0.0 4.0 -4.0 1.0 1.0 1.0 1.5 1
+
+object Cube assets/Modelos3D/Cube.obj -2.0 0.0 0.0 0.0 25.0 0.0 0.8
+object Suzanne assets/Modelos3D/Suzanne.obj -1.5 0.0 0.0 0.0 0.0 0.0 0.8
+object SuzanneSubdiv1 assets/Modelos3D/SuzanneSubdiv1.obj 2.0 0.0 0.0 0.0 0.0 0.0 0.8
+
+bezier Cube -2.0 0.0 0.0 -2.5 1.0 1.0 -1.5 1.0 -1.0 -2.0 0.0 0.0 0.20
+bezier Suzanne -1.5 0.0 0.0 -0.5 1.2 1.0 0.5 1.2 -1.0 1.5 0.0 0.0 0.25
+bezier SuzanneSubdiv1 2.0 0.0 0.0 1.5 1.4 -1.0 2.5 1.4 1.0 2.0 0.0 0.0 0.30
